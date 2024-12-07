@@ -24,7 +24,6 @@ if os.path.exists(libdir):
 import logging
 from waveshare_epd import epd2in13b_V4
 from PIL import Image, ImageDraw, ImageFont
-import traceback
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -135,7 +134,7 @@ def fetch_html_table():
             driver.get(url)
             
             # Wait for table to be present
-            wait = WebDriverWait(driver, 20)
+            wait = WebDriverWait(driver, 20)  # Increased timeout to 20 seconds
             table = wait.until(EC.presence_of_element_located((By.TAG_NAME, "table")))
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "tr")))
             
@@ -157,7 +156,7 @@ def fetch_html_table():
             data = []
             for row in rows:
                 cells = row.find_all(['td', 'th'])
-                if cells:
+                if cells:  # Make sure we have cells
                     row_data = [cell.text.strip() for cell in cells if cell.text.strip()]
                     
                     # Special handling for the second item (index 1) if it exists
