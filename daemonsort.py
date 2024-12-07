@@ -1,3 +1,6 @@
+#!/usr/bin/python
+# -*- coding:utf-8 -*-
+
 import requests
 import time
 from bs4 import BeautifulSoup
@@ -28,23 +31,41 @@ logging.basicConfig(level=logging.DEBUG)
 # Cache to store the last error state for each sim
 last_error_cache = defaultdict(str)
 
-# Initialize e-paper display
-logging.info("epd2in13b_V4 Demo")
-epd = epd2in13b_V4.EPD()
-logging.info("init and Clear")
-epd.init()
-epd.Clear()
+try:
+    # Initialize e-paper display
+    logging.info("epd2in13b_V4 Demo")
+    epd = epd2in13b_V4.EPD()
+    logging.info("init and Clear")
+    epd.init()
+    epd.Clear()
+    time.sleep(1)
+    
+    # Initialize fonts and images
+    logging.info("Drawing")    
+    font20 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 20)
+    font18 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 18)
+    
+    # Create images for black and red-yellow layers
+    HBlackimage = Image.new('1', (epd.height, epd.width), 255)  # 250*122
+    HRYimage = Image.new('1', (epd.height, epd.width), 255)  # 250*122
+    drawblack = ImageDraw.Draw(HBlackimage)
+    drawry = ImageDraw.Draw(HRYimage)
+    
+    # Display initialization message
+    drawblack.text((10, 10), 'Daemon Monitor', font=font20, fill=0)
+    drawblack.text((10, 35), 'Starting...', font=font18, fill=0)
+    drawblack.text((10, 60), time.strftime('%Y-%m-%d'), font=font18, fill=0)
+    drawblack.text((10, 85), time.strftime('%H:%M:%S'), font=font18, fill=0)
+    epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(HRYimage))
+    time.sleep(1)
 
-# Initialize fonts and images
-logging.info("Drawing")    
-font20 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 20)
-font18 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 18)
-
-# Create images for black and red-yellow layers
-HBlackimage = Image.new('1', (epd.height, epd.width), 255)  # 250*122
-HRYimage = Image.new('1', (epd.height, epd.width), 255)  # 250*122
-drawblack = ImageDraw.Draw(HBlackimage)
-drawry = ImageDraw.Draw(HRYimage)
+except IOError as e:
+    logging.info(e)
+    
+except KeyboardInterrupt:    
+    logging.info("ctrl + c:")
+    epd2in13b_V4.epdconfig.module_exit(cleanup=True)
+    exit()
 
 def setup_driver():
     # Set up Chrome options
@@ -115,52 +136,35 @@ def fetch_html_table():
     retry_delay = 5
     
     driver = setup_driver()
-    print("WebDriver initialized successfully")
     
     for attempt in range(max_retries):
         try:
-            print(f"\nAttempt {attempt + 1} to fetch data from {url}")
             driver.get(url)
-            print("Page loaded")
             
-            # Wait longer and be more specific about what we're waiting for
-            wait = WebDriverWait(driver, 20)  # Increased timeout to 20 seconds
-            print("Waiting for table content to appear...")
-            
-            # Wait for both table and at least one row to be present
+            # Wait for table to be present
+            wait = WebDriverWait(driver, 20)
             table = wait.until(EC.presence_of_element_located((By.TAG_NAME, "table")))
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "tr")))
             
             # Add a small delay to ensure content is fully loaded
             time.sleep(2)
             
-            print("Table element found")
             html_content = driver.page_source
-            
             soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Try different ways to find the table and its contents
             table = soup.find('table')
+            
             if table is None:
-                print("Couldn't find table, trying alternative selectors...")
                 return []
             
-            # Print the table HTML for debugging
-            print("Table HTML structure:")
-            print(table.prettify()[:500])  # First 500 chars of formatted table HTML
-            
             # Try to find rows in different ways
-            rows = table.select('tr')  # Using CSS selector
+            rows = table.select('tr')
             if not rows:
-                rows = table.find_all('tr', recursive=True)  # Try recursive search
-            
-            print(f"Found {len(rows)} rows in the table")
+                rows = table.find_all('tr', recursive=True)
             
             data = []
             for row in rows:
                 cells = row.find_all(['td', 'th'])
-                if cells:  # Make sure we have cells
-                    # Filter out empty strings
+                if cells:
                     row_data = [cell.text.strip() for cell in cells if cell.text.strip()]
                     
                     # Special handling for the second item (index 1) if it exists
@@ -180,22 +184,16 @@ def fetch_html_table():
                     # Only add and print the row if SessionId is not blank and there are at least 7 items
                     if len(row_data) > 3 and row_data[3].strip() and len(row_data) >= 7:
                         data.append(row_data)
-                        print(" | ".join(row_data))  # Print formatted row data
             
-            # Skip the header row when returning data
             return data[1:] if len(data) > 1 else []
             
         except Exception as e:
-            print(f"Error details: {str(e)}")
             if attempt < max_retries - 1:
-                print(f"Fetch attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
                 time.sleep(retry_delay)
             else:
-                print(f"Error fetching data after {max_retries} attempts: {e}")
                 return []
         finally:
             if attempt == max_retries - 1:
-                print("Closing WebDriver")
                 driver.quit()
 
 def check_daemons():
@@ -204,62 +202,56 @@ def check_daemons():
     
     # Collect all alerts before sending
     all_alerts = []
-    current_errors = defaultdict(str)  # Track current errors
+    current_errors = defaultdict(str)
     
     # Define keywords to search for
     error_keywords = ['fail', 'idle', 'crash', 'estop', 'motion']
     
     # Check each row for error conditions
     for row in table_data:
-        if not row:  # Skip empty rows
+        if not row:
             continue
             
-        messages = []  # Collect all messages for this row
-        sim_name = row[0]  # Assuming first column is sim name
-        sim_type = row[1] if len(row) > 1 else ""  # Get SI/SP label
+        messages = []
+        sim_name = row[0]
+        sim_type = row[1] if len(row) > 1 else ""
         
-        # Check each cell in the row for keywords
         for cell in row:
             cell_text = cell.lower()
             if any(keyword in cell_text for keyword in error_keywords):
-                messages.append(cell)  # Remove "ERR:" prefix
+                messages.append(cell)
         
-        # If we found any issues, process them
         if messages:
             error_message = " | ".join(messages)
             current_errors[sim_name] = error_message
             
-            # Only add to alerts if the error is new or different
             if last_error_cache[sim_name] != error_message:
                 alert_message = f"{sim_name} ({sim_type}) | {error_message}"
                 all_alerts.append(alert_message)
     
-    # Update the cache with current errors
-    # Remove sims that no longer have errors
     sims_to_remove = [sim for sim in last_error_cache if sim not in current_errors]
     for sim in sims_to_remove:
         del last_error_cache[sim]
     
-    # Update cache with current errors
     last_error_cache.update(current_errors)
     
-    # Send all alerts as one message if there are any
     if all_alerts:
         full_message = "\n\n".join(all_alerts)
         send_alert(full_message)
-    else:
-        print("No new issues found in this check.")
 
 def main():
-    print("Starting daemon monitor...")
     while True:
         try:
             check_daemons()
         except Exception as e:
-            print(f"Unexpected error: {e}")
+            pass
         finally:
-            print(f"Next check at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() + 30))}")
             time.sleep(30)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logging.info("ctrl + c:")
+        epd2in13b_V4.epdconfig.module_exit(cleanup=True)
+        exit()
