@@ -79,19 +79,6 @@ def setup_driver():
     return driver
 
 def send_alert(message):
-    print("\nSending notification with content:")
-    print("-" * 50)
-    print(message)
-    print("-" * 50)
-    
-    # Send notification to ntfy
-    requests.post("https://ntfy.sh/ethandaemonalerts444",
-        data=message,
-        headers={
-            "Title": "SIM ALERT",
-            "Tags": "skull"
-        })
-    
     # Clear the display
     drawblack.rectangle((0, 0, epd.height, epd.width), fill=255)  # Clear black layer
     drawry.rectangle((0, 0, epd.height, epd.width), fill=255)     # Clear red layer
@@ -128,7 +115,13 @@ def send_alert(message):
     # Update the display
     epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(HRYimage))
     
-    print(f"Notification sent at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    # Send notification to ntfy
+    requests.post("https://ntfy.sh/ethandaemonalerts444",
+        data=message,
+        headers={
+            "Title": "SIM ALERT",
+            "Tags": "skull"
+        })
 
 def fetch_html_table():
     url = 'http://10.101.20.10:3000/game-servers/daemon-states'
@@ -235,9 +228,43 @@ def check_daemons():
     
     last_error_cache.update(current_errors)
     
+    # Clear the display for status update
+    drawblack.rectangle((0, 0, epd.height, epd.width), fill=255)
+    drawry.rectangle((0, 0, epd.height, epd.width), fill=255)
+    
+    # Display current time and status
+    current_time = time.strftime('%H:%M:%S')
+    next_check = time.strftime('%H:%M:%S', time.localtime(time.time() + 30))
+    
+    drawblack.text((10, 10), f"Last Check: {current_time}", font=font18, fill=0)
+    drawblack.text((10, 35), f"Next Check: {next_check}", font=font18, fill=0)
+    
     if all_alerts:
+        # If there are alerts, display them
         full_message = "\n\n".join(all_alerts)
+        y_position = 60
+        for alert in all_alerts:
+            words = alert.split()
+            current_line = ''
+            for word in words:
+                if len(current_line) + len(word) + 1 <= 20:  # 20 chars per line
+                    current_line += (word + ' ')
+                else:
+                    drawblack.text((10, y_position), current_line.strip(), font=font18, fill=0)
+                    y_position += 20
+                    current_line = word + ' '
+            if current_line:
+                drawblack.text((10, y_position), current_line.strip(), font=font18, fill=0)
+                y_position += 30
+        
+        # Send notification
         send_alert(full_message)
+    else:
+        # If no alerts, display "No Issues Found"
+        drawblack.text((10, 60), "No Issues Found", font=font18, fill=0)
+    
+    # Update the display
+    epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(HRYimage))
 
 def main():
     while True:
@@ -246,7 +273,7 @@ def main():
         except Exception as e:
             pass
         finally:
-            time.sleep(30)
+            time.sleep(15)
 
 if __name__ == "__main__":
     try:
