@@ -69,12 +69,26 @@ except KeyboardInterrupt:
 def setup_driver():
     # Set up Chrome options
     chrome_options = Options()
-    chrome_options.add_argument('--headless')  # Run in headless mode (no GUI)
+    chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
     
+    # Performance optimizations
+    chrome_options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
+    chrome_options.add_argument('--disable-extensions')  # Disable extensions
+    chrome_options.add_argument('--disable-software-rasterizer')  # Disable software rasterizer
+    chrome_options.add_argument('--disable-javascript')  # Disable JavaScript if the page doesn't require it
+    chrome_options.add_argument('--blink-settings=imagesEnabled=false')  # Disable images
+    chrome_options.add_argument('--disable-infobars')  # Disable infobars
+    chrome_options.add_argument('--disable-notifications')  # Disable notifications
+    chrome_options.add_argument('--ignore-certificate-errors')  # Ignore certificate errors
+    chrome_options.add_argument('--disable-popup-blocking')  # Disable popup blocking
+    chrome_options.add_argument('--log-level=3')  # Minimal logging
+    chrome_options.page_load_strategy = 'eager'  # Don't wait for all resources to load
+    
     # Initialize the Chrome WebDriver
     driver = webdriver.Chrome(options=chrome_options)
+    driver.set_page_load_timeout(10)  # Set page load timeout
     return driver
 
 def send_alert(message):
@@ -133,13 +147,23 @@ def fetch_html_table():
         try:
             driver.get(url)
             
-            # Wait for table to be present
-            wait = WebDriverWait(driver, 20)  # Increased timeout to 20 seconds
+            # Wait for table to be present and have content
+            wait = WebDriverWait(driver, 10)  # Shorter initial timeout
             table = wait.until(EC.presence_of_element_located((By.TAG_NAME, "table")))
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "tr")))
             
-            # Add a small delay to ensure content is fully loaded
-            time.sleep(2)
+            # Wait for rows and verify table has content
+            rows = wait.until(lambda d: len(d.find_elements(By.TAG_NAME, "tr")) > 1)
+            
+            # Get the initial row count
+            initial_row_count = len(driver.find_elements(By.TAG_NAME, "tr"))
+            
+            # Quick check if more rows are loading
+            time.sleep(1)
+            current_row_count = len(driver.find_elements(By.TAG_NAME, "tr"))
+            
+            # If row count is still increasing, wait a bit longer
+            if current_row_count > initial_row_count:
+                time.sleep(2)
             
             html_content = driver.page_source
             soup = BeautifulSoup(html_content, 'html.parser')
@@ -148,36 +172,38 @@ def fetch_html_table():
             if table is None:
                 return []
             
-            # Try to find rows in different ways
-            rows = table.select('tr')
-            if not rows:
-                rows = table.find_all('tr', recursive=True)
+            rows = table.find_all('tr', recursive=True)
             
             data = []
             for row in rows:
                 cells = row.find_all(['td', 'th'])
-                if cells:  # Make sure we have cells
+                if cells:
                     row_data = [cell.text.strip() for cell in cells if cell.text.strip()]
                     
-                    # Special handling for the second item (index 1) if it exists
                     if len(row_data) > 1:
                         if 'SI' in row_data[1]:
                             row_data[1] = 'SI'
                         elif 'SP' in row_data[1]:
                             row_data[1] = 'SP'
                     
-                    # Special handling for the third item (index 2) if it exists
                     if len(row_data) > 2:
                         if 'online' in row_data[2].lower():
                             row_data[2] = 'ON'
                         elif 'offline' in row_data[2].lower():
                             row_data[2] = 'OFF'
                     
-                    # Only add and print the row if SessionId is not blank and there are at least 7 items
                     if len(row_data) > 3 and row_data[3].strip() and len(row_data) >= 7:
                         data.append(row_data)
             
-            return data[1:] if len(data) > 1 else []
+            # Verify we have a reasonable amount of data
+            if len(data) > 1:  # At least header + one row
+                return data[1:]
+            else:
+                # If data seems incomplete, retry
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return []
             
         except Exception as e:
             if attempt < max_retries - 1:
@@ -256,11 +282,16 @@ def check_daemons():
                 drawblack.text((10, y_position), current_line.strip(), font=font18, fill=0)
                 y_position += 30
         
+        # Draw X in bottom right for issues
+        drawry.text((epd.height - 20, epd.width - 20), "✗", font=font20, fill=0)
+        
         # Send notification
         send_alert(full_message)
     else:
         # If no alerts, display "No Issues Found"
         drawblack.text((10, 60), "No Issues Found", font=font18, fill=0)
+        # Draw checkmark in bottom right for no issues
+        drawblack.text((epd.height - 20, epd.width - 20), "✓", font=font20, fill=0)
     
     # Update the display
     epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(HRYimage))
