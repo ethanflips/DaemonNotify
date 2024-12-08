@@ -294,6 +294,10 @@ def check_sleep_mode():
     current_time = time.strftime('%H:%M')
     wake_time = '10:45'
     
+    # Skip sleep mode if force_start flag is set
+    if len(sys.argv) > 1 and sys.argv[1] == '--force':
+        return False
+    
     if current_hour >= 1 and current_time < wake_time:
         # Clear display and show sleep message
         drawblack.rectangle((0, 0, epd.height, epd.width), fill=255)
