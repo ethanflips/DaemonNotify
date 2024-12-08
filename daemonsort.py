@@ -44,19 +44,9 @@ try:
     font20 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 20)
     font18 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 18)
     
-    # Create images for black and red-yellow layers
+    # Create image for black layer only
     HBlackimage = Image.new('1', (epd.height, epd.width), 255)  # 250*122
-    HRYimage = Image.new('1', (epd.height, epd.width), 255)  # 250*122
     drawblack = ImageDraw.Draw(HBlackimage)
-    drawry = ImageDraw.Draw(HRYimage)
-    
-    # Display initialization message
-    drawblack.text((10, 10), 'Daemon Monitor', font=font20, fill=0)
-    drawblack.text((10, 35), 'Starting...', font=font18, fill=0)
-    drawblack.text((10, 60), time.strftime('%Y-%m-%d'), font=font18, fill=0)
-    drawblack.text((10, 85), time.strftime('%H:%M:%S'), font=font18, fill=0)
-    epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(HRYimage))
-    time.sleep(1)
 
 except IOError as e:
     logging.info(e)
@@ -94,7 +84,6 @@ def setup_driver():
 def send_alert(message):
     # Clear the display
     drawblack.rectangle((0, 0, epd.height, epd.width), fill=255)  # Clear black layer
-    drawry.rectangle((0, 0, epd.height, epd.width), fill=255)     # Clear red layer
     
     # Calculate text wrapping and positioning
     max_chars_per_line = 20  # Adjust based on font size and display width
@@ -124,9 +113,6 @@ def send_alert(message):
         if current_line:
             drawblack.text((10, y_position), current_line.strip(), font=font18, fill=0)
             y_position += 30  # Extra space between alerts
-    
-    # Update the display
-    epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(HRYimage))
     
     # Send notification to ntfy
     requests.post("https://ntfy.sh/ethandaemonalerts444",
@@ -216,6 +202,10 @@ def fetch_html_table():
 
 def check_daemons():
     global last_error_cache
+    
+    # Record start time of check
+    start_time = time.time()
+    
     table_data = fetch_html_table()
     
     # Collect all alerts before sending
@@ -255,11 +245,13 @@ def check_daemons():
     
     # Clear the display for status update
     drawblack.rectangle((0, 0, epd.height, epd.width), fill=255)
-    drawry.rectangle((0, 0, epd.height, epd.width), fill=255)
+    
+    # Calculate actual time taken for this check
+    check_duration = time.time() - start_time
     
     # Display current time and status
     current_time = time.strftime('%H:%M:%S')
-    next_check = time.strftime('%H:%M:%S', time.localtime(time.time() + 30))
+    next_check = time.strftime('%H:%M:%S', time.localtime(time.time() + check_duration + 5))
     
     drawblack.text((10, 10), f"Last Check: {current_time}", font=font18, fill=0)
     drawblack.text((10, 35), f"Next Check: {next_check}", font=font18, fill=0)
@@ -283,7 +275,7 @@ def check_daemons():
                 y_position += 30
         
         # Draw X in bottom right for issues
-        drawry.text((epd.height - 20, epd.width - 20), "✗", font=font20, fill=0)
+        drawblack.text((epd.height - 40, epd.width - 40), "✗", font=font20, fill=0)
         
         # Send notification
         send_alert(full_message)
@@ -291,19 +283,60 @@ def check_daemons():
         # If no alerts, display "No Issues Found"
         drawblack.text((10, 60), "No Issues Found", font=font18, fill=0)
         # Draw checkmark in bottom right for no issues
-        drawblack.text((epd.height - 20, epd.width - 20), "✓", font=font20, fill=0)
+        drawblack.text((epd.height - 40, epd.width - 40), "✓", font=font20, fill=0)
     
-    # Update the display
-    epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(HRYimage))
+    # Update the display (send empty buffer for red layer)
+    empty_buffer = Image.new('1', (epd.height, epd.width), 255)
+    epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(empty_buffer))
+
+def check_sleep_mode():
+    current_hour = int(time.strftime('%H'))
+    current_time = time.strftime('%H:%M')
+    wake_time = '10:45'
+    
+    if current_hour >= 1 and current_time < wake_time:
+        # Clear display and show sleep message
+        drawblack.rectangle((0, 0, epd.height, epd.width), fill=255)
+        drawblack.text((10, 10), "Sleep Mode", font=font20, fill=0)
+        drawblack.text((10, 40), f"Will wake at {wake_time}", font=font18, fill=0)
+        current_time = time.strftime('%H:%M:%S')
+        drawblack.text((10, 70), f"Current: {current_time}", font=font18, fill=0)
+        
+        # Update display with sleep message
+        empty_buffer = Image.new('1', (epd.height, epd.width), 255)
+        epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(empty_buffer))
+        
+        # Calculate time until wake
+        now = time.localtime()
+        wake_hour, wake_minute = map(int, wake_time.split(':'))
+        
+        # If it's past midnight, wait for wake time today
+        wake_timestamp = time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 
+                                    wake_hour, wake_minute, 0, 0, 0, -1))
+        
+        # If wake time today has passed, wait for tomorrow
+        if time.time() > wake_timestamp:
+            wake_timestamp += 24 * 60 * 60  # Add 24 hours
+            
+        # Sleep until wake time
+        sleep_duration = wake_timestamp - time.time()
+        if sleep_duration > 0:
+            time.sleep(sleep_duration)
+        return True
+    return False
 
 def main():
     while True:
         try:
+            # Check if we should enter sleep mode
+            if check_sleep_mode():
+                continue
+            
             check_daemons()
         except Exception as e:
             pass
         finally:
-            time.sleep(15)
+            time.sleep(5)
 
 if __name__ == "__main__":
     try:
