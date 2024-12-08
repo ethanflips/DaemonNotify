@@ -213,8 +213,12 @@ def fetch_html_table():
 
 def append_to_sheets(row_data):
     try:
+        # Add current timestamp to the row data
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        row_with_timestamp = row_data + [timestamp]  # Append timestamp as new column
+        
         # Prepare the data as a list of lists (even empty cells)
-        values = [row_data]
+        values = [row_with_timestamp]
         
         body = {
             'values': values
