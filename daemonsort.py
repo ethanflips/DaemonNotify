@@ -81,46 +81,24 @@ def setup_driver():
     driver.set_page_load_timeout(10)  # Set page load timeout
     return driver
 
-def send_alert(message):
-    # Clear the display
-    drawblack.rectangle((0, 0, epd.height, epd.width), fill=255)  # Clear black layer
-    
-    # Calculate text wrapping and positioning
-    max_chars_per_line = 20  # Adjust based on font size and display width
-    y_position = 10
-    current_time = time.strftime('%H:%M:%S')
-    
-    # Display time at the top
-    drawblack.text((10, y_position), current_time, font=font18, fill=0)
-    y_position += 25  # Move down past the time
-    
-    # Split message into lines and display each alert
-    for alert in message.split('\n\n'):
-        # Split long lines into multiple lines
-        words = alert.split()
-        current_line = ''
-        
-        for word in words:
-            if len(current_line) + len(word) + 1 <= max_chars_per_line:
-                current_line += (word + ' ')
-            else:
-                # Draw the current line and start a new one
-                drawblack.text((10, y_position), current_line.strip(), font=font18, fill=0)
-                y_position += 20
-                current_line = word + ' '
-        
-        # Draw any remaining text
-        if current_line:
-            drawblack.text((10, y_position), current_line.strip(), font=font18, fill=0)
-            y_position += 30  # Extra space between alerts
-    
-    # Send notification to ntfy
+def send_alert(message, raw_data=None):
+    # Send formatted alert to original channel
     requests.post("https://ntfy.sh/ethandaemonalerts444",
         data=message,
         headers={
             "Title": "SIM ALERT",
             "Tags": "skull"
         })
+    
+    # If raw data is provided, send to raw channel
+    if raw_data:
+        raw_message = " | ".join(str(item) for item in raw_data)
+        requests.post("https://ntfy.sh/ethandaemonraw444",
+            data=raw_message,
+            headers={
+                "Title": "SIM ALERT",
+                "Tags": "skull"
+            })
 
 def fetch_html_table():
     url = 'http://10.101.20.10:3000/game-servers/daemon-states'
@@ -210,20 +188,16 @@ def check_daemons():
     
     # Collect all alerts before sending
     all_alerts = []
+    raw_alerts = []  # Store raw data for alerts
     current_errors = defaultdict(str)
     
     # Define keywords to search for
     error_keywords = ['fail', 'idle', 'crash', 'estop', 'motion']
-    sheets_keywords = ['fail', 'idle', 'crash']
     
     # Check each row for error conditions
     for row in table_data:
         if not row:
             continue
-            
-        # Check for sheets-relevant errors and append if found
-        if any(keyword in cell.lower() for cell in row for keyword in sheets_keywords):
-            append_to_sheets(row)
             
         messages = []
         sim_name = row[0]
@@ -267,6 +241,7 @@ def check_daemons():
                       ('idle' in prev_error.lower() and 'crash' in error_message.lower())))):
                 alert_message = f"{sim_name} ({sim_type}) | {error_message}"
                 all_alerts.append(alert_message)
+                raw_alerts.append(row)  # Store the full row data
     
     # Remove sims that no longer have errors
     sims_to_remove = [sim for sim in last_error_cache if sim not in current_errors]
@@ -276,51 +251,12 @@ def check_daemons():
     # Update cache with current errors
     last_error_cache.update(current_errors)
     
-    # Clear the display for status update
-    drawblack.rectangle((0, 0, epd.height, epd.width), fill=255)
-    
-    # Calculate actual time taken for this check
-    check_duration = time.time() - start_time
-    
-    # Display current time and status
-    current_time = time.strftime('%H:%M:%S')
-    next_check = time.strftime('%H:%M:%S', time.localtime(time.time() + check_duration + 5))
-    
-    drawblack.text((10, 10), f"Last Check: {current_time}", font=font18, fill=0)
-    drawblack.text((10, 35), f"Next Check: {next_check}", font=font18, fill=0)
-    
+    # If there are alerts, send them
     if all_alerts:
-        # If there are alerts, display them
         full_message = "\n\n".join(all_alerts)
-        y_position = 60
-        for alert in all_alerts:
-            words = alert.split()
-            current_line = ''
-            for word in words:
-                if len(current_line) + len(word) + 1 <= 20:  # 20 chars per line
-                    current_line += (word + ' ')
-                else:
-                    drawblack.text((10, y_position), current_line.strip(), font=font18, fill=0)
-                    y_position += 20
-                    current_line = word + ' '
-            if current_line:
-                drawblack.text((10, y_position), current_line.strip(), font=font18, fill=0)
-                y_position += 30
-        
-        # Draw X in bottom right for issues
-        drawblack.text((epd.height - 40, epd.width - 40), "✗", font=font20, fill=0)
-        
-        # Send notification
-        send_alert(full_message)
-    else:
-        # If no alerts, display "No Issues Found"
-        drawblack.text((10, 60), "No Issues Found", font=font18, fill=0)
-        # Draw checkmark in bottom right for no issues
-        drawblack.text((epd.height - 40, epd.width - 40), "✓", font=font20, fill=0)
-    
-    # Update the display (send empty buffer for red layer)
-    empty_buffer = Image.new('1', (epd.height, epd.width), 255)
-    epd.display(epd.getbuffer(HBlackimage), epd.getbuffer(empty_buffer))
+        # Send both formatted alert and raw data
+        for raw_data in raw_alerts:
+            send_alert(full_message, raw_data)
 
 def check_sleep_mode():
     current_hour = int(time.strftime('%H'))
