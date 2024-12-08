@@ -13,8 +13,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from collections import defaultdict
 import sys
 import os
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 
 # Path setup for e-paper display
 picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pic')
@@ -31,15 +29,6 @@ logging.basicConfig(level=logging.DEBUG)
 
 # Cache to store the last error state for each sim
 last_error_cache = defaultdict(str)
-
-# Setup Google Sheets API
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-SERVICE_ACCOUNT_FILE = 'dmeg.json'
-SPREADSHEET_ID = '1ts4vFRvx3j_qLnK82p5KACGJ8TGanM_NeQZQKsykOIs'
-
-# Setup credentials and service
-creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-sheets_service = build('sheets', 'v4', credentials=creds)
 
 try:
     # Initialize e-paper display
@@ -211,31 +200,6 @@ def fetch_html_table():
             if attempt == max_retries - 1:
                 driver.quit()
 
-def append_to_sheets(row_data):
-    try:
-        # Add current timestamp to the row data
-        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        row_with_timestamp = row_data + [timestamp]  # Append timestamp as new column
-        
-        # Prepare the data as a list of lists (even empty cells)
-        values = [row_with_timestamp]
-        
-        body = {
-            'values': values
-        }
-        
-        # Append the data to the sheet
-        result = sheets_service.spreadsheets().values().append(
-            spreadsheetId=SPREADSHEET_ID,
-            range='Sheet1',  # Adjust if your sheet name is different
-            valueInputOption='RAW',
-            insertDataOption='INSERT_ROWS',
-            body=body
-        ).execute()
-        
-    except Exception as e:
-        print(f"Error appending to sheets: {str(e)}")
-
 def check_daemons():
     global last_error_cache
     
@@ -250,17 +214,17 @@ def check_daemons():
     
     # Define keywords to search for
     error_keywords = ['fail', 'idle', 'crash', 'estop', 'motion']
-    sheets_keywords = ['fail', 'idle', 'crash']  # Separate list for sheets logging
+    sheets_keywords = ['fail', 'idle', 'crash']
     
     # Check each row for error conditions
     for row in table_data:
         if not row:
             continue
             
-        # Append the full row data to sheets only if it contains relevant errors
+        # Check for sheets-relevant errors and append if found
         if any(keyword in cell.lower() for cell in row for keyword in sheets_keywords):
             append_to_sheets(row)
-        
+            
         messages = []
         sim_name = row[0]
         sim_type = row[1] if len(row) > 1 else ""
@@ -280,10 +244,10 @@ def check_daemons():
             
             # Check for other errors
             if any(keyword in cell_text for keyword in error_keywords):
-                # Don't add duplicate crash messages
+                # Skip duplicate crash messages
                 if 'crash' in cell_text and found_crash:
                     continue
-                # Don't add idle message if we already have crash
+                # Skip idle message if we already have crash
                 if 'idle' in cell_text and found_crash:
                     continue
                 messages.append(cell)
@@ -304,12 +268,12 @@ def check_daemons():
                 alert_message = f"{sim_name} ({sim_type}) | {error_message}"
                 all_alerts.append(alert_message)
     
-    # Update the cache with current errors
     # Remove sims that no longer have errors
     sims_to_remove = [sim for sim in last_error_cache if sim not in current_errors]
     for sim in sims_to_remove:
         del last_error_cache[sim]
     
+    # Update cache with current errors
     last_error_cache.update(current_errors)
     
     # Clear the display for status update
